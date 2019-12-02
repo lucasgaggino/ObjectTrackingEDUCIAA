@@ -48,3 +48,4 @@ PROJECT_INC_FOLDERS := $(PROJECT)/inc
 # source files
 PROJECT_C_FILES := $(wildcard $(PROJECT)/src/*.c)
 PROJECT_ASM_FILES := $(wildcard $(PROJECT)/src/*.S)
+

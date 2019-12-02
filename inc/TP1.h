@@ -41,7 +41,8 @@
 #include "sapi_gpio.h"                   // Use GPIO peripherals
 #include "sapi_uart.h"                   // Use UART peripherals
 #include "sapi_delay.h"
-#include "inttypes.h"
+
+
 
 
 #endif
@@ -58,6 +59,18 @@ extern "C" {
 #endif
 
 /*==================[macros]=================================================*/
+//sync Pattern for COM with PC
+#define SYNC_PATTERN "xxPleaseSYNCwithMExx"
+#define SYNC_PATTERN_SIZE 21
+#define SYNC_PATTERN_DEFAULT_TIMEOUT 1000
+
+#define GPU_PACK_DATA_LEN 10
+#define GPU_PACK_DATA_SIZE 11
+#define DATA_TRANSFER_TIMEOUT 1000
+
+#define PI 3.141592653589793
+
+#define STRING_ANGLES_DELIMITER '@'
 // The byte size of commands
 #define CMD_SIZE 6
 
@@ -156,6 +169,15 @@ struct CAMARA {
 	    uint8_t _receive_cmd[CMD_SIZE];
 };
 
+struct TargetData {
+	float alfa1;//angulo horizontal CAM1
+	float beta1;//angulo Vertical CAM1
+	float alfa2;
+	float beta2;
+	float lamda;//distancia al objetivo
+	float altura;//alutura en el eje Z con CAM 1 como origen
+};
+
 typedef uint8_t byte;
 /*==================[external data declaration]==============================*/
 
@@ -166,4 +188,7 @@ typedef uint8_t byte;
 #ifdef __cplusplus
 }
 #endif
+
+
+
 

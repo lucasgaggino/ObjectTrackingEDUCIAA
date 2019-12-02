@@ -3,8 +3,11 @@
 /*==================[inclusions]=============================================*/
 
 
+#include <math.h>
 #include "TP1.h"       // <= sAPI header
-#include <time.h>
+
+
+
 
 /*==================[macros and definitions]=================================*/
 
@@ -163,7 +166,7 @@ bool sync(struct CAMARA * cam)
 
 bool initial( struct CAMARA * cam)
 {
-  createCommand( CMD_INITIAL, 0, (*cam).ColorType, (*cam).PreviewResolution, (*cam).JPEGResolution ,cam);
+  createCommand( CMD_INITIAL, 0, (*cam).ColorType, 0x07 , (*cam).JPEGResolution ,cam);
   sendCommand(cam);
 
   if( waitForACK( RESPONSE_DELAY, CMD_INITIAL, cam ) )
@@ -241,39 +244,181 @@ bool setBaudRate( struct CAMARA * cam )
   return false;
 }
 
-/*
+
 bool getPicture(  uint16_t processDelay, uint16_t * pictureSize , struct CAMARA * cam )
 {
-  pictureSize = 0;
+  (*pictureSize) = 0;
 
   createCommand( CMD_GETPICTURE, (*cam).PictureType, 0, 0, 0, cam );
   sendCommand(cam);
 
   // Give the camera some time for processing
-  delay( processDelay );
+  //delay( processDelay/10 );
 
   if( !waitForACK( processDelay, CMD_GETPICTURE,cam ) )
     return false;
 
-  if( waitForResponse( processDelay ) && (*cam)._receive_cmd[1] == CMD_DATA )
+  if(  waitForResponse( processDelay, (*cam)._receive_cmd, CMD_SIZE, cam ) && (*cam)._receive_cmd[1] == CMD_DATA )
   {
     // Set the picture size for future reference
-    pictureSize = (*cam)._receive_cmd[5] << 8;
-    pictureSize |= (*cam)._receive_cmd[4] << 8;
-    pictureSize |= (*cam)._receive_cmd[3];
+    *pictureSize = (*cam)._receive_cmd[5] << 8;
+    *pictureSize |= (*cam)._receive_cmd[4] << 8;
+    *pictureSize |= (*cam)._receive_cmd[3];
 
     return true;
   }
 
   return false;
 }
-*/
+
 
 void sendACK( const byte cmd, uint16_t packageId,struct CAMARA * cam )
 {
   createCommand( CMD_ACK, cmd, 0, (byte)(packageId & 0xFF), (byte)(packageId >> 8) , cam);
   sendCommand(cam);
 }
+
+
+bool getRawPicture(  byte pictureBuffer[], uint16_t * bufferSize, uint16_t processDelay ,struct CAMARA * cam)
+{
+  uint16_t pictureSize = 0;
+
+  if( !getPicture(  processDelay, &pictureSize, cam ) )
+    return false;
+
+  if( pictureSize > (*bufferSize) )
+    return false;
+  else
+    (*bufferSize) = pictureSize;
+
+
+  // Wait for the package
+  if( waitForResponse( processDelay, pictureBuffer, pictureSize,cam ) ) {
+    sendACK( RAW_ACK,0,cam );
+    return true;
+  }
+  if(pictureSize>0){uartWriteString( UART_USB, "Picture Transfrer FAIL \r \n" );}
+  return false;
+}
+
+
+void uartWritePicture( uartMap_t uart, byte* str ){
+   while( *str != 0 ){
+      uartWriteByte( uart, *str );
+      str++;
+   }
+}
+
+bool syncWithPC ( tick_t timeout){
+	bool patternReceived=FALSE;
+	char Patt[]=SYNC_PATTERN;
+	uint16_t size=SYNC_PATTERN_SIZE;
+	patternReceived=waitForReceiveStringOrTimeoutBlocking(UART_USB,Patt, size, timeout);
+	return patternReceived;
+}
+
+bool dataFromPC (tick_t timeout, char * data , uint32_t * dataSize){
+	char Patt[]=SYNC_PATTERN;
+	uint16_t size=SYNC_PATTERN_SIZE;
+
+	return receiveBytesUntilReceiveStringOrTimeoutBlocking (UART_USB, Patt,size, data, dataSize, timeout );
+}
+
+int  findDelimiterIndex(char *data,int initIndex){
+	int delimIndex=initIndex;
+
+	while( ((char) data[delimIndex]) != '@' && delimIndex<200){
+		delimIndex++;
+	}
+	return delimIndex;
+}
+
+
+bool str2flt(char* str, int init, int end, float* data,int signo){
+	float result= 0.0f;
+	  size_t dotpos = 0;
+	  for (size_t n = init; n < end ; n++)
+	  {
+	    if (str[n] == '.')
+	    {
+	      dotpos = (end-init) - (n-init)  - 1;
+	    }
+	    else
+	    {
+	      result = result * 10.0f + (str[n]-'0');
+	    }
+	  }
+	  while ( dotpos--)
+	  {
+	    result /= 10.0f;
+	  }
+	  (*data)=result*signo;
+	return TRUE;
+}
+
+
+bool anglesFromString(char* data, uint32_t  dataSize, struct TargetData * Tdata){
+	int i=0;
+	int signo=1;
+	char car;
+	int end;
+
+
+	for(int iter=0;iter<4;iter++){
+		car=(char) data[i];
+		while(car != '+' && car != '-' && i != (int) dataSize){
+			i++;
+			car=data[i];
+
+		}
+		if(((char) data[i]) == '-') signo=-1;
+		else signo=1;
+		i++;
+		end=findDelimiterIndex(data,i);
+		if(iter==0)
+					str2flt(data,i,end,&(Tdata->alfa1),signo);
+		if(iter==1)
+					str2flt(data,i,end,&(Tdata->beta1),signo);
+		if(iter==2)
+					str2flt(data,i,end,&(Tdata->alfa2),signo);
+		if(iter==3)
+					str2flt(data,i,end,&(Tdata->beta2),signo);
+
+		i=end+1;
+	}
+
+
+	return TRUE;
+
+}
+
+void calculateDistance(struct TargetData* Tdata){
+	float sh=0.3;
+	float sv=0.2;
+	float sz=0.05;
+
+	float a1=PI*(Tdata->alfa1)/180;
+	float b1=PI*(Tdata->beta1)/180;
+	float a2=PI*(Tdata->alfa2)/180;
+	float b2=PI*(Tdata->beta2)/180;
+
+	double A=sin(a1)-sin(a2);
+	double B=sin(b1)-sin(b2);
+	double C=cos(a1)*cos(b1)-cos(a2)*cos(b2);
+
+	double vecNorm=(A*A+B*B+C*C);
+
+	if(vecNorm!=0){
+		(Tdata->lamda)=(sh*A + sv*B + sz*C)/vecNorm;
+		if( Tdata->lamda < 0) Tdata->lamda=5;
+	}
+	else  Tdata->lamda=10;
+	Tdata->altura = Tdata->lamda*sin(b1);
+
+}
+
+
+
 /*==================[internal data definition]===============================*/
 
 /*==================[external data definition]===============================*/
@@ -285,52 +430,34 @@ void sendACK( const byte cmd, uint16_t packageId,struct CAMARA * cam )
 
 
 
-
 int main(void){
 
    /* ------------- INICIALIZACIONES ------------- */
 
-	struct CAMARA cam;
-	cam.SerialChanel=UART_232;
-	cam.BaudRate=BAUD115200;
-	cam.ColorType=CT_JPEG;
-	cam.PreviewResolution=PR_160x120;
-	cam.JPEGResolution=JR_640x480;
-
-
  /* Inicializar la placa */
  boardConfig();
-
  /* Inicializar UART_USB a 115200 baudios */
- gpioWrite( LED1, ON );
- uartConfig( UART_232, 115200 );
- if(sync(&cam)) gpioWrite( LEDG, ON );
- else 	 gpioWrite( LEDR, ON );
+ uartConfig( UART_USB, 115200 );
+
+struct TargetData t_data;
+char data[100]="0";
+uint32_t dataSize=100;
 
 
- delay(2000);
- gpioWrite( LEDG, OFF );
- gpioWrite( LEDR, OFF );
 
- gpioWrite( LED2, ON );
+	while(1){
+	 if(syncWithPC(SYNC_PATTERN_DEFAULT_TIMEOUT)){
+		 gpioWrite(LEDG,ON);
+		 dataSize=200;
+		 if(dataFromPC(DATA_TRANSFER_TIMEOUT,data,&dataSize)){
+			 gpioWrite(LED1,ON);
+		 	 anglesFromString(data,dataSize,&t_data);
+		 	 calculateDistance(&t_data);
+		 }
 
-
- //uartWriteString( UART_USB, "DEBUG c/sAPI\r\n" );
-
- /* ------------- MAIN LOOP ------------- */
- while(1) {
-	 if(initial(&cam)) {gpioWrite( LEDG, ON );gpioWrite( LEDR, OFF);}
-	 else 	{ gpioWrite( LEDR, ON );gpioWrite( LEDG, OFF);}
-
-	 delay(400);
-
-
+	 }
+	 else gpioWrite(LEDR,ON);
+	 delay(100);
  }
 
-
-
- return 0 ;
- }
-
-
-
+}
